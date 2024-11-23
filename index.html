@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gesture-Controlled Video Playback</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background: url('assets/bg.jpg') no-repeat center center fixed; /* Imagem de fundo */
+            background-size: cover;
+        }
+        #videoPlayer {
+            width: 100vw;
+            height: 100vh;
+            object-fit: cover;
+            display: none; /* Ocultar o vídeo inicialmente */
+        }
+        #webcam {
+            position: fixed;
+            bottom: 10px;
+            left: 10px;
+            width: 200px;
+            border: 2px solid #444;
+        }
+        canvas {
+            position: fixed;
+            bottom: 10px;
+            left: 10px;
+            width: 200px;
+        }
+    </style>
+</head>
+<body>
+    <!-- Vídeo principal em tela cheia -->
+    <video id="videoPlayer" src="assets/example.mp4" muted></video>
+    
+    <!-- Webcam em sobreposição -->
+    <video id="webcam" autoplay muted playsinline></video>
+    <canvas id="canvas"></canvas>
+
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands"></script>
+    <script>
+        const videoPlayer = document.getElementById('videoPlayer');
+        const webcamElement = document.getElementById('webcam');
+        const canvasElement = document.getElementById('canvas');
+        const canvasCtx = canvasElement.getContext('2d');
+
+        let handDetectedTime = 0;
+        const openHandThreshold = 3000; // 3 segundos
+
+        async function setupCamera() {
+            const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+            webcamElement.srcObject = stream;
+
+            return new Promise((resolve) => {
+                webcamElement.onloadedmetadata = () => {
+                    webcamElement.play();
+                    resolve(webcamElement);
+                };
+            });
+        }
+
+        function drawResults(results) {
+            canvasCtx.save();
+            canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+            canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
+
+            if (results.multiHandLandmarks) {
+                for (const landmarks of results.multiHandLandmarks) {
+                    for (let i = 0; i < landmarks.length; i++) {
+                        const { x, y } = landmarks[i];
+                        canvasCtx.beginPath();
+                        canvasCtx.arc(x * canvasElement.width, y * canvasElement.height, 5, 0, 2 * Math.PI);
+                        canvasCtx.fillStyle = "#00FF00";
+                        canvasCtx.fill();
+                    }
+                }
+            }
+            canvasCtx.restore();
+        }
+
+        function isHandOpen(landmarks) {
+            const thumbTip = landmarks[4]; // Dedo polegar
+            const pinkyTip = landmarks[20]; // Dedo mínimo
+
+            // Calcular a distância entre o polegar e o dedo mínimo
+            const distance = Math.sqrt(Math.pow(pinkyTip.x - thumbTip.x, 2) + Math.pow(pinkyTip.y - thumbTip.y, 2));
+
+            return distance > 0.2;  // Ajuste conforme necessário
+        }
+
+        function showVideo() {
+            document.body.style.backgroundImage = 'none';  // Oculta o fundo
+            videoPlayer.style.display = 'block';           // Exibe o vídeo
+            videoPlayer.play();                            // Inicia o vídeo
+        }
+
+        function hideVideo() {
+            videoPlayer.style.display = 'none';            // Oculta o vídeo
+            document.body.style.backgroundImage = "url('assets/bg.jpg')";  // Mostra o fundo
+        }
+
+        async function main() {
+            await setupCamera();
+            canvasElement.width = webcamElement.videoWidth;
+            canvasElement.height = webcamElement.videoHeight;
+
+            const hands = new Hands({
+                locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`,
+            });
+
+            hands.setOptions({
+                maxNumHands: 1,
+                modelComplexity: 1,
+                minDetectionConfidence: 0.5,
+                minTrackingConfidence: 0.5,
+            });
+
+            hands.onResults((results) => {
+                drawResults(results);
+
+                if (results.multiHandLandmarks.length > 0) {
+                    const handIsOpen = isHandOpen(results.multiHandLandmarks[0]);
+
+                    if (handIsOpen) {
+                        handDetectedTime += 100;
+                        if (handDetectedTime >= openHandThreshold) {
+                            showVideo();
+                            handDetectedTime = 0;  // Reseta o timer
+                        }
+                    } else {
+                        handDetectedTime = 0;  // Reseta o timer se a mão não estiver aberta
+                    }
+                } else {
+                    handDetectedTime = 0;  // Reseta o timer se nenhuma mão for detectada
+                }
+            });
+
+            videoPlayer.addEventListener('ended', () => {
+                hideVideo();  // Oculta o vídeo ao término
+            });
+
+            async function cameraLoop() {
+                while (true) {
+                    await hands.send({ image: webcamElement });
+                    await new Promise(requestAnimationFrame);
+                }
+            }
+
+            cameraLoop();
+        }
+
+        main().catch((error) => {
+            console.error('Error:', error);
+        });
+    </script>
+</body>
+</html>
